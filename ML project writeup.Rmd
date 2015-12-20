@@ -1,0 +1,151 @@
+---
+title: 'Machine Learning Project: Weight Lifting Exercise'
+output: html_document
+---
+###**I.Project Overview**
+The objective of this project is to use data from barbell lifts of six individuals to predict the manner in which they did the exercise into one of the six classes (A, B, C, D, E), where Class-A indicates the correct method of weight lift. Random Forest, Classification Tree and GBM models were used to fit the training dataset.A sub-set of the training dataset was split for cross validation. Based on Cross Validation prediction accuracy and out-of-sample error rates, Random Forest technique was chosen for prediction to predict the 20 different test cases.
+
+###**II.Pre-Processing Data and Exploratory Analysis**
+####Packages required
+```{r, echo=TRUE,message = F, warning = F, tidy = F, comment=NA}
+options(warn = -1)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(parallel)
+library(gbm)
+library(plyr)
+library(rpart)
+
+```
+####Loading Data
+
+The training and testing datasets are downloaded from this <a href="http://groupware.les.inf.puc-rio.br/har">source</a>. Blank observations were converted into "NA" when reading the csv files. 
+
+```{r, echo=TRUE}
+train.raw <-read.csv("./trainraw.csv", na.strings=c("NA","", " "))
+test.raw <-read.csv("./testraw.csv", na.strings=c("NA","", " "))
+```
+####Cleaning Data
+Number of columns with at least one "NA" are checked. Both the training and testing datasets have 100 variables with at least 1 "NA". 
+```{r, echo=TRUE}
+#check number of variables with NAs in training set
+is_col_na <- (colSums(is.na(train.raw)) > 0)
+str(train.raw[, is_col_na], list.len=0)
+
+#check number of variables with NAs in testing set
+is_col_na <- (colSums(is.na(test.raw)) > 0)
+str(test.raw[, is_col_na], list.len=0)
+
+```
+New dataframes- 'training' and 'testing' are created removing these 100 variables which leaves each set with 60 variables.
+```{r, echo="TRUE"}
+training<-train.raw[, colSums(is.na(train.raw))==0]
+testing<-test.raw[, colSums(is.na(test.raw))==0]
+```
+
+The first seven variables in both sets are identifiers and timestamps which are not useful predictors. These seven unnecessary variables are removed from both sets. The tidy dataset consists of 52 predictors and 1 outcome variable in the training set and 52 predictors and 1 identification variable in the testing set. 
+```{r, echo="TRUE"}
+training<-training[,-(1:7)]
+testing<-testing[,-(1:7)]
+dim(training); dim(testing)
+```
+####Exploratory Analysis
+The following histogram shows that class A which represents the correct weight lifting technique has the highest frequency, while classes B, C, D and E representing the incorrect excercise technique have counts below 4000. 
+```{r, echo=TRUE}
+g<-ggplot(training,aes(x=classe))+
+  geom_histogram(binwidth=.5, fill = "dark red")+
+  labs(x="Classe",y="Frequency")+ scale_y_continuous(breaks=seq(0, 6000, 1000))+
+  ggtitle("Histogram of Classes from the Training set")
+g  
+table(training$classe)
+```
+
+###**III.Model Building and Cross Validation**
+First, the training dataset is split into a training set and a cross-validation set using a 70:30 split. 
+```{r, echo=TRUE}
+inTrain<-createDataPartition(y=training$classe,p=0.7, list = FALSE)
+trainset<-training[inTrain,]
+crossvalset<-training[-inTrain,]
+dim(trainset); dim(crossvalset)
+```
+
+Given that the outcome variable "classe" is a categorical variable taking five values, we use Random Forest, Classification and Regression Tree(CART) and Gradient Boosting Machine(GBM) to build our training model. Random Forest is both easier to tune and is supposed to correct for overfitting. The model with the highest accuracy or lowest out of sample error will be used for predicting "classe" on the testing dataset. 
+
+####Training with Random Forest Model
+To optimize computation speed, 'parallel' and 'trControl' parameters are used where the model is trained with cross validation of 4 resampling iterations with the Random Forest Model.
+```{r, echo=TRUE}
+set.seed(1234)
+mod.rf <- randomForest(classe~.,method="class", data=trainset, trControl= trainControl(method = "cv",number = 4,allowParallel = TRUE))
+```
+####Cross Validation with Random Forest Model
+Cross validation is applied on the cross-val data set and a confusion matrix is build to assess the accuracy and out-of-sample error of this model.  
+```{r, echo=TRUE}
+set.seed(1234)
+cv.rf<-predict(mod.rf, crossvalset)
+c1<-confusionMatrix(crossvalset$classe, cv.rf)
+c1
+```
+The accuracy of the model is very high at 99.51%.
+
+####Training with Classification and Regression Tree(CART)
+CART is used to train the model with cross validation of 4 resampling iterations.
+```{r, echo=TRUE}
+set.seed(1234)
+mod.cart <-train(classe~., method="rpart", data=training, trControl= trainControl(method = "cv",number = 4,allowParallel = TRUE))
+
+```
+####Cross Validation with Classification and Regression Tree(CART)
+```{r, echo=TRUE}
+set.seed(1234)
+cv.cart<-predict(mod.cart, crossvalset)
+
+c2<-confusionMatrix(crossvalset$classe, cv.cart)
+c2
+```
+The accuracy of the model is quite low at 50.01%.
+
+####Training with Gradient Boosting Machine(GBM)
+GBM is used to train the model with cross validation of 4 resampling iterations.
+```{r, echo=TRUE}
+set.seed(1234)
+mod.gbm <- train(classe~., method="gbm",data=trainset,trControl= trainControl(method = "cv",number = 4, verboseIter = FALSE), verbose= FALSE)
+
+```
+
+####Cross Validation with Gradient Boosting Machine(GBM)
+```{r, echo=TRUE}
+set.seed(1234)
+cv.gbm<-predict(mod.gbm, crossvalset)
+c2<-confusionMatrix(crossvalset$classe, cv.gbm)
+c2
+```
+The accuracy of the model is at 95.68%. This model's prediction is better than that of CART but still inferior to that of Random Forest. 
+
+####Accuracy and Out-of-Sample Error
+The above exercise shows that CART provided the weakest predictions since its Accuracy was only 50.01%, while GBM and Random Forest models provided accuracy of 95.68% and 99.51% respectively. The expected Out-of-Sample Error rates for each of the three models are as follows:
+```{r, echo=TRUE}
+missClass = function(values,prediction){sum(prediction!= values)/length(values)}
+
+#Misclassification Rate from Random Forest Model
+missClass(crossvalset$classe, predict(mod.rf,crossvalset))
+
+#Misclassification Rate from CART Model
+missClass(crossvalset$classe, predict(mod.cart,crossvalset))
+
+#Misclassification Rate from GBM Model
+missClass(crossvalset$classe, predict(mod.gbm,crossvalset))
+```
+
+The expected out-of-sample errors were highest for CART(0.499) followed by  GBM(0.043) and very low for Random Forest(0.004). Hence, Random Forest is our chosen model for making predictions on the testing set. 
+
+###**IV.Prediction**
+The Random Forest prediction algorithm which was previously created is applied on the test set of 20 observations. The table shows the distribution of 20 test cases among the five classes. 
+```{r, echo=TRUE}
+pre.rf<-predict(mod.rf, testing)
+pre.rf
+table(pre.rf)
+```
+
+###**References**
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
